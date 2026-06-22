@@ -13,8 +13,8 @@ import java.net.URLEncoder;
 public class MaxNotificationListener extends NotificationListenerService {
 
     // !!! Впишите свои данные Telegram сюда !!!
-    private static final String TG_BOT_TOKEN = "ВАШ_ТОКЕН_ТЕЛЕГРАМ_БОТА";
-    private static final String TG_CHAT_ID = "ВАШ_ЛИЧНЫЙ_ЧАТ_ID";
+    private static final String TG_BOT_TOKEN = "5085657849:AAFZJRZtrIUBOUXMFtcuYR_to491szyrpeY";
+    private static final String TG_CHAT_ID = "721813997";
 
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
