@@ -1,8 +1,14 @@
-name: Build APK
-on: [push, workflow_dispatch]
+name: Build and Release APK
+
+on:
+  workflow_dispatch: # Оставляет только ручной запуск кнопкой из вкладки Actions
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Права на создание релиза и загрузку файла
+
     steps:
       - uses: actions/checkout@v5
       
@@ -12,12 +18,15 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
           
-      # ИСХОДНЫЙ ИСПРАВЛЕННЫЙ ШАГ: используем системный gradle вместо скрипта ./gradlew
       - name: Build Debug APK
         run: gradle assembleDebug
         
-      - name: Upload APK
-        uses: actions/upload-artifact@v5
+      # Создание релиза и загрузка APK
+      - name: Create Release and Upload APK
+        uses: softprops/action-gh-release@v2
         with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          tag_name: 'v1.0.0-debug'
+          name: 'Manual Build'
+          draft: false
+          prerelease: false
+          files: app/build/outputs/apk/debug/app-debug.apk
