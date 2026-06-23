@@ -131,15 +131,22 @@ public class MainActivity extends Activity {
             List<AppInfo> apps = new ArrayList<>();
             Set<String> savedPackages = prefs.getStringSet("allowed_packages", new HashSet<String>());
             
-            // Запрашиваем абсолютно все установленные пакеты в системе без фильтрации флагов
             List<ApplicationInfo> pkgs = packageManager.getInstalledApplications(PackageManager.GET_META_DATA);
 
             for (ApplicationInfo app : pkgs) {
                 String label = app.loadLabel(packageManager).toString();
                 
-                // Пропускаем только если у пакета вообще нет вменяемого имени (программные библиотеки)
                 if (label.isEmpty() || app.packageName == null) {
                     continue;
+                }
+
+                // ФИЛЬТР: оставляем только пользовательские приложения (FLAG_SYSTEM == 0)
+                // ИСКЛЮЧЕНИЕ: делаем поблажку для приложений СМС (они считаются системными)
+                boolean isSystem = (app.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+                boolean isSmsApp = app.packageName.contains("mms") || app.packageName.contains("messaging");
+
+                if (isSystem && !isSmsApp) {
+                    continue; // Пропускаем системный мусор
                 }
 
                 AppInfo info = new AppInfo();
@@ -149,7 +156,6 @@ public class MainActivity extends Activity {
                 apps.add(info);
             }
 
-            // Сортируем полученный массив по алфавиту для удобного поиска в списке
             Collections.sort(apps, new Comparator<AppInfo>() {
                 @Override
                 public int compare(AppInfo o1, AppInfo o2) {
@@ -163,7 +169,7 @@ public class MainActivity extends Activity {
         @Override
         protected void onPostExecute(List<AppInfo> apps) {
             installedApps = apps;
-            appsContainer.removeAllViews(); // Очищаем контейнер перед заполнением
+            appsContainer.removeAllViews();
             for (AppInfo app : installedApps) {
                 CheckBox cb = new CheckBox(MainActivity.this);
                 cb.setText(app.label + " (" + app.packageName + ")");
