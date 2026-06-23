@@ -24,6 +24,7 @@ import org.json.JSONObject;
 
 public class MaxNotificationListener extends NotificationListenerService {
 
+    // Хранилище активных уведомлений. Ключ: Заголовок (Имя контакта), Значение: Уведомление
     private static final Map<String, Notification> activeNotifications = new HashMap<>();
     private boolean isPolling = false;
     private int lastUpdateId = 0;
@@ -41,7 +42,6 @@ public class MaxNotificationListener extends NotificationListenerService {
         SharedPreferences prefs = getSharedPreferences("MaxForwarderPrefs", Context.MODE_PRIVATE);
         Set<String> allowedPackages = prefs.getStringSet("allowed_packages", new HashSet<String>());
 
-        // Если пакет текущего уведомления не отмечен галочкой пользователем — игнорируем его
         if (!allowedPackages.contains(currentPackage)) {
             return;
         }
@@ -49,11 +49,12 @@ public class MaxNotificationListener extends NotificationListenerService {
         Notification notification = sbn.getNotification();
         Bundle extras = notification.extras;
 
-        String title = extras.getString(Notification.EXTRA_TITLE, "Уведомление");
+        String title = extras.getString(Notification.EXTRA_TITLE, "");
         CharSequence textChar = extras.getCharSequence(Notification.EXTRA_TEXT);
         String text = (textChar != null) ? textChar.toString() : "";
 
-        if (!text.isEmpty()) {
+        if (!text.isEmpty() && !title.isEmpty()) {
+            // Сохраняем уведомление в памяти по его заголовку (Имени отправителя)
             activeNotifications.put(title, notification);
 
             String botToken = prefs.getString("tg_bot_token", "");
@@ -61,10 +62,19 @@ public class MaxNotificationListener extends NotificationListenerService {
 
             if (botToken.isEmpty() || chatId.isEmpty()) return;
 
-            // Формируем красивое имя источника (название пакета или понятное имя)
-            String sourceName = currentPackage.contains("mms") || currentPackage.contains("messaging") ? "💬 SMS" : "📩 " + title;
+            // Формируем единый чистый заголовок для Telegram: "Имя (Название приложения)"
+            String appLabel = "Приложение";
+            try {
+                appLabel = getPackageManager().getApplicationLabel(
+                    getPackageManager().getApplicationInfo(currentPackage, 0)).toString();
+            } catch (Exception e) {
+                if (currentPackage.contains("mms") || currentPackage.contains("messaging")) {
+                    appLabel = "SMS";
+                }
+            }
 
-            String messageToSend = "<b>" + sourceName + ":</b>\n\n" + text;
+            // Отправляем в Telegram. Формат строго: <b>Имя_Отправителя (Источник):</b>
+            String messageToSend = "<b>" + title + " (" + appLabel + "):</b>\n\n" + text;
             sendToTelegramAsync(messageToSend, botToken, chatId);
         }
     }
@@ -73,9 +83,11 @@ public class MaxNotificationListener extends NotificationListenerService {
     public void onNotificationRemoved(StatusBarNotification sbn) {
         Notification notification = sbn.getNotification();
         Bundle extras = notification.extras;
-        String title = extras.getString(Notification.EXTRA_TITLE);
-        if (title != null) {
-            activeNotifications.remove(title);
+        if (extras != null) {
+            String title = extras.getString(Notification.EXTRA_TITLE);
+            if (title != null) {
+                activeNotifications.remove(title);
+            }
         }
     }
 
@@ -99,7 +111,7 @@ public class MaxNotificationListener extends NotificationListenerService {
                         Log.e("MaxForwarder", "Ошибка пуллинга TG", e);
                     }
                     try {
-                        Thread.sleep(4000);
+                        Thread.sleep(4000); // Опрос каждые 4 секунды
                     } catch (InterruptedException e) {
                         break;
                     }
@@ -137,21 +149,21 @@ public class MaxNotificationListener extends NotificationListenerService {
 
                         String text = message.optString("text", "");
 
+                        // Проверяем, ответил ли пользователь реплаем (Reply)
                         if (message.has("reply_to_message") && !text.isEmpty()) {
                             JSONObject replyTo = message.getJSONObject("reply_to_message");
                             String replyText = replyTo.optString("text", "");
 
-                            // Извлекаем заголовок из формата чата
-                            if (replyText.contains(":") && replyText.startsWith("<b>")) {
-                                int end = replyText.indexOf(":</b>");
-                                if (end != -1) {
-                                    String chatTitle = replyText.substring(7, end); // Убираем <b>
+                            // Ищем текст до скобки " (", где начинается название приложения
+                            // Пример строки: "Иван Петров (MAX):" -> вырежем "Иван Петров"
+                            if (replyText.contains(" (") && replyText.contains("):")) {
+                                int endOfName = replyText.indexOf(" (");
+                                String chatTitle = replyText.substring(0, endOfName).trim();
 
-                                    // Если это было СМС, то быстрый ответ шторки Android отправит его обратно в СМС-клиент!
-                                    boolean success = replyToMax(chatTitle, text);
-                                    String status = success ? "✅ Ответ отправлен" : "❌ Ошибка: Уведомление уже удалено из шторки смартфона";
-                                    sendToTelegramAsync(status, botToken, myChatId);
-                                }
+                                // Отправляем быстрый ответ в шторку Android
+                                boolean success = replyToMax(chatTitle, text);
+                                String status = success ? "✅ Ответ отправлен" : "❌ Ошибка: Уведомление от " + chatTitle + " уже исчезло с экрана";
+                                sendToTelegramAsync(status, botToken, myChatId);
                             }
                         }
                     }
@@ -179,7 +191,7 @@ public class MaxNotificationListener extends NotificationListenerService {
                             action.actionIntent.send(getApplicationContext(), 0, intent);
                             return true;
                         } catch (Exception e) {
-                            Log.e("MaxForwarder", "Не удалось симулировать ввод", e);
+                            Log.e("MaxForwarder", "Не удалось сымитировать ввод", e);
                         }
                     }
                 }
