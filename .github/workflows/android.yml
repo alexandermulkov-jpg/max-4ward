@@ -7,7 +7,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Права на создание релиза
+      contents: write # Права на перезапись релизов и удаление старых ассетов
 
     steps:
       - uses: actions/checkout@v5
@@ -21,7 +21,7 @@ jobs:
       - name: Build Debug APK
         run: gradle assembleDebug -PbuildNumber=${{ github.run_number }}
         
-      # Создание релиза и загрузка переименованного APK
+      # Создание релиза и автоматическое обновление файлов внутри него
       - name: Create Release and Upload APK
         uses: softprops/action-gh-release@v2
         with:
@@ -29,5 +29,6 @@ jobs:
           name: 'Manual Build'
           draft: false
           prerelease: false
-          # Используем маску *.apk, чтобы GitHub Actions нашел файл с любым номером версии
+          make_latest: true
+          # Маска для поиска скомпилированного APK файла с версией
           files: app/build/outputs/apk/debug/*.apk
