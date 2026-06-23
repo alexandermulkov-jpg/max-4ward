@@ -6,7 +6,6 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
-import android.content.pm.ResolveInfo;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -21,10 +20,8 @@ import android.widget.Toast;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 public class MainActivity extends Activity {
@@ -131,67 +128,44 @@ public class MainActivity extends Activity {
     private class LoadAppsTask extends AsyncTask<Void, Void, List<AppInfo>> {
         @Override
         protected List<AppInfo> doInBackground(Void... voids) {
-            Map<String, AppInfo> appsMap = new HashMap<>();
+            List<AppInfo> apps = new ArrayList<>();
             Set<String> savedPackages = prefs.getStringSet("allowed_packages", new HashSet<String>());
+            
+            // Получаем весь список программ устройства
+            List<ApplicationInfo> pkgs = packageManager.getInstalledApplications(PackageManager.GET_META_DATA);
 
-            // 1. Ищем все приложения, которые отображаются в меню телефона (содержат LAUNCHER)
-            Intent intent = new Intent(Intent.ACTION_MAIN, null);
-            intent.addCategory(Intent.CATEGORY_LAUNCHER);
-            List<ResolveInfo> viewableApps = packageManager.queryIntentActivities(intent, 0);
-
-            for (ResolveInfo info : viewableApps) {
-                ApplicationInfo appInfo = info.activityInfo.applicationInfo;
-                if (appInfo != null && appInfo.packageName != null) {
-                    String label = appInfo.loadLabel(packageManager).toString();
-                    
-                    // Фильтруем системные, но если это наше собственное приложение, оставляем
-                    boolean isSystem = (appInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
-                    if (isSystem && !appInfo.packageName.equals(getPackageName())) {
-                        continue;
-                    }
-
-                    AppInfo app = new AppInfo();
-                    app.label = label;
-                    app.packageName = appInfo.packageName;
-                    app.isChecked = savedPackages.contains(appInfo.packageName);
-                    appsMap.put(app.packageName, app);
+            for (ApplicationInfo app : pkgs) {
+                String label = app.loadLabel(packageManager).toString();
+                
+                if (label.isEmpty() || app.packageName == null) {
+                    continue;
                 }
+
+                // Логика фильтрации: убираем системные службы, но оставляем СМС-пакеты
+                boolean isSystem = (app.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+                boolean isSms = app.packageName.contains("mms") || app.packageName.contains("messaging");
+                
+                // Оставляем пользовательские программы и СМС-сообщения
+                if (isSystem && !isSms) {
+                    continue; 
+                }
+
+                AppInfo info = new AppInfo();
+                info.label = label;
+                info.packageName = app.packageName;
+                info.isChecked = savedPackages.contains(app.packageName);
+                apps.add(info);
             }
 
-            // 2. Принудительно добавляем известные системные пакеты для СМС и мессенджеров
-            // (на случай, если они скрыты политиками ОС как "сервисы")
-            String[] customPackages = {
-                "ru.oneme.app",                               // Оригинальный MAX
-                "com.android.mms",                            // Стандартные СМС на многих прошивках
-                "com.google.android.apps.messaging",          // Гугл СМС (Xiaomi, Pixel и др.)
-                "com.android.messaging"                       // Чистый Android СМС
-            };
-
-            for (String pkg : customPackages) {
-                try {
-                    ApplicationInfo ai = packageManager.getApplicationInfo(pkg, 0);
-                    if (!appsMap.containsKey(pkg)) {
-                        AppInfo app = new AppInfo();
-                        app.label = ai.loadLabel(packageManager).toString();
-                        app.packageName = pkg;
-                        app.isChecked = savedPackages.contains(pkg);
-                        appsMap.put(pkg, app);
-                    }
-                } catch (PackageManager.NameNotFoundException e) {
-                    // Если такого приложения физически нет на устройстве — просто пропускаем
-                }
-            }
-
-            // Переводим карту в список и сортируем
-            List<AppInfo> sortedList = new ArrayList<>(appsMap.values());
-            Collections.sort(sortedList, new Comparator<AppInfo>() {
+            // Алфавитная сортировка
+            Collections.sort(apps, new Comparator<AppInfo>() {
                 @Override
                 public int compare(AppInfo o1, AppInfo o2) {
                     return o1.label.compareToIgnoreCase(o2.label);
                 }
             });
 
-            return sortedList;
+            return apps;
         }
 
         @Override
