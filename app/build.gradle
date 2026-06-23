@@ -2,6 +2,9 @@ plugins {
     id 'com.android.application'
 }
 
+// Получаем номер сборки из GitHub Actions. Если его нет, ставим 1
+def currentBuildNumber = project.hasProperty('buildNumber') ? project.property('buildNumber').toInteger() : 1
+
 android {
     namespace 'com.example.maxforwarder'
     compileSdk 34
@@ -10,7 +13,22 @@ android {
         applicationId "com.example.maxforwarder"
         minSdk 21
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        
+        // Цифра версии (должна быть целым числом, увеличивается автоматически)
+        versionCode currentBuildNumber
+        
+        // Текстовая версия для пользователей (будет выглядеть как 1.0.1, 1.0.2, 1.0.15 и т.д.)
+        versionName "1.0." + currentBuildNumber
     }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+dependencies {
+    // Базовые компоненты Android SDK
+    implementation 'com.android.support:support-annotations:28.0.0'
 }
