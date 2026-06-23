@@ -14,10 +14,8 @@ android {
         minSdk 21
         targetSdk 34
         
-        // Цифра версии (должна быть целым числом, увеличивается автоматически)
+        // Автоматическое увеличение версии
         versionCode currentBuildNumber
-        
-        // Текстовая версия для пользователей (будет выглядеть как 1.0.1, 1.0.2, 1.0.15 и т.д.)
         versionName "1.0." + currentBuildNumber
     }
 
@@ -28,7 +26,7 @@ android {
     }
 }
 
+// Блок зависимостей оставляем абсолютно пустым. 
+// Для чистого android.app.Activity внешние библиотеки не требуются.
 dependencies {
-    // Базовые компоненты Android SDK
-    implementation 'com.android.support:support-annotations:28.0.0'
 }
