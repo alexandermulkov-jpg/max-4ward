@@ -33,7 +33,6 @@ public class MainActivity extends Activity {
     private PackageManager packageManager;
     private List<AppInfo> installedApps = new ArrayList<>();
 
-    // Класс для удобного хранения данных об элементе списка
     private static class AppInfo {
         String label;
         String packageName;
@@ -52,7 +51,6 @@ public class MainActivity extends Activity {
         mainLayout.setOrientation(LinearLayout.VERTICAL);
         mainLayout.setPadding(32, 32, 32, 32);
 
-        // Поля ввода Telegram
         TextView tvToken = new TextView(this);
         tvToken.setText("Telegram Bot Token:");
         mainLayout.addView(tvToken);
@@ -72,19 +70,16 @@ public class MainActivity extends Activity {
         etChatId.setText(prefs.getString("tg_chat_id", ""));
         mainLayout.addView(etChatId);
 
-        // Кнопка сохранения данных
         Button btnSave = new Button(this);
         btnSave.setText("Сохранить настройки и доступ");
         mainLayout.addView(btnSave);
 
-        // Заголовок для списка приложений
         TextView tvAppsTitle = new TextView(this);
         tvAppsTitle.setText("Выберите приложения для пересылки:");
         tvAppsTitle.setTextSize(16);
         tvAppsTitle.setPadding(0, 48, 0, 16);
         mainLayout.addView(tvAppsTitle);
 
-        // Контейнер, куда асинхронно добавятся чекбоксы программ
         appsContainer = new LinearLayout(this);
         appsContainer.setOrientation(LinearLayout.VERTICAL);
         mainLayout.addView(appsContainer);
@@ -92,7 +87,6 @@ public class MainActivity extends Activity {
         scrollView.addView(mainLayout);
         setContentView(scrollView);
 
-        // Загружаем список приложений в фоновом потоке, чтобы UI не зависал
         new LoadAppsTask().execute();
 
         btnSave.setOnClickListener(new View.OnClickListener() {
@@ -106,7 +100,6 @@ public class MainActivity extends Activity {
                     return;
                 }
 
-                // Собираем пакеты всех отмеченных приложений
                 Set<String> selectedPackages = new HashSet<>();
                 for (int i = 0; i < appsContainer.getChildCount(); i++) {
                     View child = appsContainer.getChildAt(i);
@@ -118,7 +111,6 @@ public class MainActivity extends Activity {
                     }
                 }
 
-                // Сохраняем всё в SharedPreferences
                 prefs.edit()
                      .putString("tg_bot_token", token)
                      .putString("tg_chat_id", chatId)
@@ -127,37 +119,37 @@ public class MainActivity extends Activity {
 
                 Toast.makeText(MainActivity.this, "Настройки успешно сохранены!", Toast.LENGTH_SHORT).show();
 
-                // Открываем доступ к чтению пушей
                 Intent intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
                 startActivity(intent);
             }
         });
     }
 
-    // Фоновая задача для чтения списка установленного ПО
     private class LoadAppsTask extends AsyncTask<Void, Void, List<AppInfo>> {
         @Override
         protected List<AppInfo> doInBackground(Void... voids) {
             List<AppInfo> apps = new ArrayList<>();
             Set<String> savedPackages = prefs.getStringSet("allowed_packages", new HashSet<String>());
             
+            // Запрашиваем абсолютно все установленные пакеты в системе без фильтрации флагов
             List<ApplicationInfo> pkgs = packageManager.getInstalledApplications(PackageManager.GET_META_DATA);
 
             for (ApplicationInfo app : pkgs) {
-                // Отсекаем системные утилиты без иконки/запускаемого интерфейса, оставляя пользовательские
-                if ((app.flags & ApplicationInfo.FLAG_SYSTEM) != 0 && 
-                    !app.packageName.contains("mms") && !app.packageName.contains("messaging")) {
-                    continue; 
+                String label = app.loadLabel(packageManager).toString();
+                
+                // Пропускаем только если у пакета вообще нет вменяемого имени (программные библиотеки)
+                if (label.isEmpty() || app.packageName == null) {
+                    continue;
                 }
 
                 AppInfo info = new AppInfo();
-                info.label = app.loadLabel(packageManager).toString();
+                info.label = label;
                 info.packageName = app.packageName;
                 info.isChecked = savedPackages.contains(app.packageName);
                 apps.add(info);
             }
 
-            // Сортировка по алфавиту для удобства
+            // Сортируем полученный массив по алфавиту для удобного поиска в списке
             Collections.sort(apps, new Comparator<AppInfo>() {
                 @Override
                 public int compare(AppInfo o1, AppInfo o2) {
@@ -171,6 +163,7 @@ public class MainActivity extends Activity {
         @Override
         protected void onPostExecute(List<AppInfo> apps) {
             installedApps = apps;
+            appsContainer.removeAllViews(); // Очищаем контейнер перед заполнением
             for (AppInfo app : installedApps) {
                 CheckBox cb = new CheckBox(MainActivity.this);
                 cb.setText(app.label + " (" + app.packageName + ")");
