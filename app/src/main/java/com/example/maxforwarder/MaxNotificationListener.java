@@ -16,16 +16,15 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class MaxNotificationListener extends NotificationListenerService {
 
-    // Хранилище активных уведомлений для возможности ответа
-    // Ключ: Имя отправителя (Title), Значение: Объект уведомления
     private static final Map<String, Notification> activeNotifications = new HashMap<>();
-    
     private boolean isPolling = false;
     private int lastUpdateId = 0;
 
@@ -37,43 +36,49 @@ public class MaxNotificationListener extends NotificationListenerService {
 
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
-        if ("ru.oneme.app".equals(sbn.getPackageName())) {
-            Notification notification = sbn.getNotification();
-            Bundle extras = notification.extras;
+        String currentPackage = sbn.getPackageName();
+        
+        SharedPreferences prefs = getSharedPreferences("MaxForwarderPrefs", Context.MODE_PRIVATE);
+        Set<String> allowedPackages = prefs.getStringSet("allowed_packages", new HashSet<String>());
 
-            String title = extras.getString(Notification.EXTRA_TITLE, "MAX Сообщение");
-            CharSequence textChar = extras.getCharSequence(Notification.EXTRA_TEXT);
-            String text = (textChar != null) ? textChar.toString() : "";
+        // Если пакет текущего уведомления не отмечен галочкой пользователем — игнорируем его
+        if (!allowedPackages.contains(currentPackage)) {
+            return;
+        }
 
-            if (!text.isEmpty()) {
-                // Сохраняем уведомление, чтобы знать, куда отвечать
-                activeNotifications.put(title, notification);
+        Notification notification = sbn.getNotification();
+        Bundle extras = notification.extras;
 
-                SharedPreferences prefs = getSharedPreferences("MaxForwarderPrefs", Context.MODE_PRIVATE);
-                String botToken = prefs.getString("tg_bot_token", "");
-                String chatId = prefs.getString("tg_chat_id", "");
+        String title = extras.getString(Notification.EXTRA_TITLE, "Уведомление");
+        CharSequence textChar = extras.getCharSequence(Notification.EXTRA_TEXT);
+        String text = (textChar != null) ? textChar.toString() : "";
 
-                if (botToken.isEmpty() || chatId.isEmpty()) return;
+        if (!text.isEmpty()) {
+            activeNotifications.put(title, notification);
 
-                String messageToSend = "📩 <b>Новое в MAX (" + title + "):</b>\n\n" + text;
-                sendToTelegramAsync(messageToSend, botToken, chatId);
-            }
+            String botToken = prefs.getString("tg_bot_token", "");
+            String chatId = prefs.getString("tg_chat_id", "");
+
+            if (botToken.isEmpty() || chatId.isEmpty()) return;
+
+            // Формируем красивое имя источника (название пакета или понятное имя)
+            String sourceName = currentPackage.contains("mms") || currentPackage.contains("messaging") ? "💬 SMS" : "📩 " + title;
+
+            String messageToSend = "<b>" + sourceName + ":</b>\n\n" + text;
+            sendToTelegramAsync(messageToSend, botToken, chatId);
         }
     }
 
     @Override
     public void onNotificationRemoved(StatusBarNotification sbn) {
-        if ("ru.oneme.app".equals(sbn.getPackageName())) {
-            Notification notification = sbn.getNotification();
-            Bundle extras = notification.extras;
-            String title = extras.getString(Notification.EXTRA_TITLE);
-            if (title != null) {
-                activeNotifications.remove(title);
-            }
+        Notification notification = sbn.getNotification();
+        Bundle extras = notification.extras;
+        String title = extras.getString(Notification.EXTRA_TITLE);
+        if (title != null) {
+            activeNotifications.remove(title);
         }
     }
 
-    // Фоновый поток для опроса Telegram-бота
     private void startTelegramPolling() {
         if (isPolling) return;
         isPolling = true;
@@ -94,7 +99,7 @@ public class MaxNotificationListener extends NotificationListenerService {
                         Log.e("MaxForwarder", "Ошибка пуллинга TG", e);
                     }
                     try {
-                        Thread.sleep(4000); // Проверяем Telegram каждые 4 секунды
+                        Thread.sleep(4000);
                     } catch (InterruptedException e) {
                         break;
                     }
@@ -127,29 +132,26 @@ public class MaxNotificationListener extends NotificationListenerService {
                     if (update.has("message")) {
                         JSONObject message = update.getJSONObject("message");
                         String fromId = message.getJSONObject("from").getString("id");
-                        
-                        // Проверяем, что сообщение написали именно вы, а не левый человек
+
                         if (!fromId.equals(myChatId)) continue;
 
                         String text = message.optString("text", "");
 
-                        // Проверяем, является ли это ответом (Reply) на пересланное сообщение
                         if (message.has("reply_to_message") && !text.isEmpty()) {
                             JSONObject replyTo = message.getJSONObject("reply_to_message");
                             String replyText = replyTo.optString("text", "");
 
-                            // Пытаемся вытащить имя чата из формата "Новое в MAX (Имя):"
-                            if (replyText.contains("Новое в MAX (") && replyText.contains("):")) {
-                                int start = replyText.indexOf("Новое в MAX (") + 13;
-                                int end = replyText.indexOf("):");
-                                String chatTitle = replyText.substring(start, end);
+                            // Извлекаем заголовок из формата чата
+                            if (replyText.contains(":") && replyText.startsWith("<b>")) {
+                                int end = replyText.indexOf(":</b>");
+                                if (end != -1) {
+                                    String chatTitle = replyText.substring(7, end); // Убираем <b>
 
-                                // Вызываем функцию отправки ответа в MAX
-                                boolean success = replyToMax(chatTitle, text);
-                                
-                                // Отправляем отчет в ТГ об успешности
-                                String status = success ? "✅ Отправлено в MAX" : "❌ Ошибка: Уведомление этого чата уже исчезло с экрана телефона";
-                                sendToTelegramAsync(status, botToken, myChatId);
+                                    // Если это было СМС, то быстрый ответ шторки Android отправит его обратно в СМС-клиент!
+                                    boolean success = replyToMax(chatTitle, text);
+                                    String status = success ? "✅ Ответ отправлен" : "❌ Ошибка: Уведомление уже удалено из шторки смартфона";
+                                    sendToTelegramAsync(status, botToken, myChatId);
+                                }
                             }
                         }
                     }
@@ -161,23 +163,19 @@ public class MaxNotificationListener extends NotificationListenerService {
         }
     }
 
-    // Функция симуляции «Быстрого ответа» из шторки уведомлений Android
     private boolean replyToMax(String chatTitle, String replyText) {
         Notification notification = activeNotifications.get(chatTitle);
         if (notification == null) return false;
 
-        // Ищем во входящем уведомлении кнопку ответа (RemoteInput)
         if (notification.actions != null) {
             for (Notification.Action action : notification.actions) {
                 if (action.getRemoteInputs() != null) {
                     for (RemoteInput remoteInput : action.getRemoteInputs()) {
-                        // Создаем намерение ответа
                         Intent intent = new Intent();
                         Bundle bundle = new Bundle();
                         bundle.putCharSequence(remoteInput.getResultKey(), replyText);
                         RemoteInput.addResultsToIntent(action.getRemoteInputs(), intent, bundle);
                         try {
-                            // Отправляем ответ обратно в приложение MAX
                             action.actionIntent.send(getApplicationContext(), 0, intent);
                             return true;
                         } catch (Exception e) {
