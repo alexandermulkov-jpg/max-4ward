@@ -37,7 +37,7 @@ public class MaxNotificationListener extends NotificationListenerService {
 
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
-        if (true) {
+        if ("ru.oneme.app".equals(sbn.getPackageName())) {
             Notification notification = sbn.getNotification();
             Bundle extras = notification.extras;
 
