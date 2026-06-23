@@ -7,7 +7,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Права на перезапись релизов и удаление старых ассетов
+      contents: write # Права на редактирование релизов
 
     steps:
       - uses: actions/checkout@v5
@@ -21,7 +21,7 @@ jobs:
       - name: Build Debug APK
         run: gradle assembleDebug -PbuildNumber=${{ github.run_number }}
         
-      # Создание релиза и автоматическое обновление файлов внутри него
+      # Создание релиза с принудительной очисткой старых файлов
       - name: Create Release and Upload APK
         uses: softprops/action-gh-release@v2
         with:
@@ -30,5 +30,5 @@ jobs:
           draft: false
           prerelease: false
           make_latest: true
-          # Маска для поиска скомпилированного APK файла с версией
+          overwrite: true # КРИТИЧЕСКИЙ ПАРАМЕТР: заставляет удалять старые ассеты с другими именами перед заливкой
           files: app/build/outputs/apk/debug/*.apk
