@@ -19,7 +19,7 @@ jobs:
           distribution: 'temurin'
           
       - name: Build Debug APK
-        run: gradle assembleDebug
+        run: gradle assembleDebug -PbuildNumber=${{ github.run_number }}
         
       # Создание релиза и загрузка APK
       - name: Create Release and Upload APK
