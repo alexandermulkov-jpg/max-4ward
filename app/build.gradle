@@ -4,6 +4,7 @@ plugins {
 
 // Получаем номер сборки из GitHub Actions. Если его нет, ставим 1
 def currentBuildNumber = project.hasProperty('buildNumber') ? project.property('buildNumber').toInteger() : 1
+def appVersionName = "1.0." + currentBuildNumber
 
 android {
     namespace 'com.example.maxforwarder'
@@ -14,9 +15,8 @@ android {
         minSdk 21
         targetSdk 34
         
-        // Автоматическое увеличение версии
         versionCode currentBuildNumber
-        versionName "1.0." + currentBuildNumber
+        versionName appVersionName
     }
 
     buildTypes {
@@ -24,9 +24,15 @@ android {
             minifyEnabled false
         }
     }
+
+    // Автоматическое переименование готового APK файла
+    applicationVariants.configureEach { variant ->
+        variant.outputs.configureEach { output ->
+            // Формируем имя: MaxForwarder-v1.0.5.apk
+            outputFileName = "MaxForwarder-v${appVersionName}.apk"
+        }
+    }
 }
 
-// Блок зависимостей оставляем абсолютно пустым. 
-// Для чистого android.app.Activity внешние библиотеки не требуются.
 dependencies {
 }
