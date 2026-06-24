@@ -283,4 +283,104 @@ public class MaxNotificationListener extends NotificationListenerService {
                         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                         conn.setRequestMethod("POST");
                         conn.setDoOutput(true);
-                        conn.setRequestProperty
+                        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+
+                        String postData = "chat_id=" + chatId + "&name=" + URLEncoder.encode(topicName, "UTF-8");
+                        OutputStream os = conn.getOutputStream();
+                        os.write(postData.getBytes("UTF-8"));
+                        os.flush(); os.close();
+
+                        if (conn.getResponseCode() == 200) {
+                            BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                            StringBuilder res = new StringBuilder(); String line;
+                            while ((line = in.readLine()) != null) res.append(line);
+                            in.close();
+
+                            JSONObject json = new JSONObject(res.toString());
+                            threadId = json.getJSONObject("result").getInt("message_thread_id");
+                            topicCache.put(topicName, threadId);
+                        }
+                        conn.disconnect();
+                    }
+
+                    // Отправка самого сообщения в созданный топик
+                    String msgUrl = "https://api.telegram.org/bot" + botToken + "/sendMessage";
+                    URL url = new URL(msgUrl);
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("POST");
+                    conn.setDoOutput(true);
+                    conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+
+                    String postData = "chat_id=" + chatId 
+                                    + "&text=" + URLEncoder.encode("<b>" + senderName + ":</b>\n\n" + message.substring(message.indexOf("\n\n") + 2), "UTF-8") 
+                                    + "&parse_mode=HTML";
+                    
+                    if (threadId > 0) {
+                        postData += "&message_thread_id=" + threadId;
+                    }
+
+                    OutputStream os = conn.getOutputStream();
+                    os.write(postData.getBytes("UTF-8"));
+                    os.flush(); os.close();
+                    conn.getResponseCode();
+                    conn.disconnect();
+
+                } catch (Exception e) {
+                    Log.e("MaxForwarder", "Ошибка отправки в топик", e);
+                }
+            }
+        }).start();
+    }
+
+    // Простая прямая отправка без создания топиков (для статусов и системных ответов)
+    private void sendRawMessage(final String message, final String botToken, final String chatId, final int threadId) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String urlString = "https://api.telegram.org/bot" + botToken + "/sendMessage";
+                    URL url = new URL(urlString);
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("POST");
+                    conn.setDoOutput(true);
+                    conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+
+                    String postData = "chat_id=" + chatId 
+                                    + "&text=" + URLEncoder.encode(message, "UTF-8") 
+                                    + "&parse_mode=HTML";
+                    if (threadId > 0) {
+                        postData += "&message_thread_id=" + threadId;
+                    }
+
+                    OutputStream os = conn.getOutputStream();
+                    os.write(postData.getBytes("UTF-8"));
+                    os.flush(); os.close();
+                    conn.getResponseCode();
+                    conn.disconnect();
+                } catch (Exception e) {
+                    Log.e("MaxForwarder", "Ошибка отправки системного сообщения", e);
+                }
+            }
+        }).start();
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel serviceChannel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "Max Forwarder Background Service",
+                    NotificationManager.IMPORTANCE_LOW
+            );
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) {
+                manager.createNotificationChannel(serviceChannel);
+            }
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        isPolling = false;
+        super.onDestroy();
+    }
+}
