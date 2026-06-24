@@ -108,12 +108,7 @@ private void loadInstalledApps() {
         List<ApplicationInfo> packages;
         
         try {
-            // Запрашиваем абсолютно все приложения, включая скрытые и системные компоненты
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION.SDK_INT) {
-                packages = pm.getInstalledApplications(PackageManager.MATCH_ALL);
-            } else {
-                packages = pm.getInstalledApplications(PackageManager.GET_META_DATA);
-            }
+            packages = pm.getInstalledApplications(PackageManager.MATCH_ALL);
         } catch (Exception e) {
             packages = pm.getInstalledApplications(0);
         }
@@ -122,13 +117,23 @@ private void loadInstalledApps() {
         Set<String> savedPackages = prefs.getStringSet("allowed_packages", new HashSet<String>());
 
         for (ApplicationInfo packageInfo : packages) {
-            // Убираем жесткий фильтр, чтобы показать вообще ВСЕ приложения (и системные, и пользовательские)
-            String label = packageInfo.loadLabel(pm).toString();
-            boolean isChecked = savedPackages.contains(packageInfo.packageName);
-            appList.add(new AppInfo(label, packageInfo.packageName, isChecked));
+            // ФИЛЬТР: Пропускаем системные приложения, оставляем только пользовательские
+            // Также принудительно оставляем подсистемы SMS/звонков на случай, если они вшиты как системные
+            boolean isSystem = (packageInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+            boolean isUpdatedSystem = (packageInfo.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0;
+            
+            boolean isSmsOrMessaging = packageInfo.packageName.contains("telephony") || 
+                                       packageInfo.packageName.contains("mms") || 
+                                       packageInfo.packageName.contains("messaging");
+
+            if (!isSystem || isUpdatedSystem || isSmsOrMessaging) {
+                String label = packageInfo.loadLabel(pm).toString();
+                boolean isChecked = savedPackages.contains(packageInfo.packageName);
+                appList.add(new AppInfo(label, packageInfo.packageName, isChecked));
+            }
         }
         
-        // Сортируем список по алфавиту для удобства поиска
+        // Сортировка по алфавиту для удобства
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
             appList.sort((a, b) -> a.name.compareToIgnoreCase(b.name));
         }
