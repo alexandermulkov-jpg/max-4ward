@@ -32,7 +32,6 @@ import org.json.JSONObject;
 public class MaxNotificationListener extends NotificationListenerService {
 
     private static final Map<String, Notification> activeNotifications = new HashMap<>();
-    // Хранилище созданных топиков в формате Ключ: Название_Чата, Значение: ID_Топика
     private static final Map<String, Integer> topicCache = new HashMap<>();
     
     private boolean isPolling = false;
@@ -44,12 +43,11 @@ public class MaxNotificationListener extends NotificationListenerService {
         super.onCreate();
         createNotificationChannel();
         
-        // Включаем постоянное уведомление (Foreground), чтобы Android не закрывал службу
         Notification notification = null;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             notification = new Notification.Builder(this, CHANNEL_ID)
                     .setContentTitle("MAX Forwarder активен")
-                    .setContentText("Фоновая пересылка запущена и защищена от закрытия")
+                    .setContentText("Фоновая пересылка запущена")
                     .setSmallIcon(android.R.drawable.ic_dialog_info)
                     .build();
         } else {
@@ -60,14 +58,13 @@ public class MaxNotificationListener extends NotificationListenerService {
                     .build();
         }
         
-        // Идентификатор службы 101
         startForeground(101, notification);
         startTelegramPolling();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        return START_STICKY; // Перезапускать службу, если она всё же упадет
+        return START_STICKY;
     }
 
     @Override
@@ -106,12 +103,11 @@ public class MaxNotificationListener extends NotificationListenerService {
                 }
             }
 
-            // Имя топика (группировка по приложениям: например "MAX" или "SMS")
             String topicName = appLabel;
-            String messageToSend = "<b>" + title + ":</b>\n\n" + text;
+            String messageToSend = "<b>" + title + " (" + appLabel + "):</b>\n\n" + text;
             
-            // Отправляем в конкретный топик
-            sendToTelegramAsync(messageToSend, botToken, chatId, topicName, title);
+            // Запускаем умную отправку
+            sendToTelegramAsync(messageToSend, botToken, chatId, topicName);
         }
     }
 
@@ -181,27 +177,29 @@ public class MaxNotificationListener extends NotificationListenerService {
                         JSONObject message = update.getJSONObject("message");
                         String fromId = message.getJSONObject("from").getString("id");
 
-                        if (!fromId.equals(myChatId)) continue;
+                        // Проверяем отправителя (работает как для личного ID, так и внутри группы)
+                        if (!fromId.equals(myChatId) && !message.getJSONObject("chat").getString("id").equals(myChatId)) continue;
 
                         String text = message.optString("text", "").trim();
                         int topicId = message.has("message_thread_id") ? message.getInt("message_thread_id") : 0;
 
-                        // ОБРАБОТКА КОМАНДЫ СТАТУСА
                         if (text.equalsIgnoreCase("/status")) {
                             String statusReport = getPhoneStatus();
                             sendRawMessage(statusReport, botToken, myChatId, topicId);
                             continue;
                         }
 
-                        // ОБРАБОТКА ОТВЕТОВ РЕПЛАЕМ
                         if (message.has("reply_to_message") && !text.isEmpty()) {
                             JSONObject replyTo = message.getJSONObject("reply_to_message");
                             String replyText = replyTo.optString("text", "");
 
                             if (replyText.contains(":") && replyText.startsWith("<b>")) {
-                                int endOfName = replyText.indexOf(":</b>");
+                                int endOfName = replyText.indexOf(" (");
+                                if (endOfName == -1) {
+                                    endOfName = replyText.indexOf(":</b>");
+                                }
                                 if (endOfName != -1) {
-                                    String chatTitle = replyText.substring(7, endOfName).trim();
+                                    String chatTitle = replyText.substring(3, endOfName).replace("<b>", "").trim();
 
                                     boolean success = replyToMax(chatTitle, text);
                                     String status = success ? "✅ Ответ отправлен" : "❌ Ошибка: Уведомление уже исчезло";
@@ -218,7 +216,6 @@ public class MaxNotificationListener extends NotificationListenerService {
         }
     }
 
-    // Метод получения статуса смартфона
     private String getPhoneStatus() {
         try {
             IntentFilter ifilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
@@ -266,44 +263,49 @@ public class MaxNotificationListener extends NotificationListenerService {
         return false;
     }
 
-    // Асинхронная отправка с динамическим созданием топиков под каждое приложение
-    private void sendToTelegramAsync(final String message, final String botToken, final String chatId, final String topicName, final String senderName) {
+    // Умная отправка: сначала пытается отправить в топик. Если чат не поддерживает топики — отправляет обычным текстом.
+    private void sendToTelegramAsync(final String message, final String botToken, final String chatId, final String topicName) {
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
                     int threadId = 0;
-                    
-                    if (topicCache.containsKey(topicName)) {
-                        threadId = topicCache.get(topicName);
-                    } else {
-                        // Запрос на создание топика в группе Telegram
-                        String urlString = "https://api.telegram.org/bot" + botToken + "/createForumTopic";
-                        URL url = new URL(urlString);
-                        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                        conn.setRequestMethod("POST");
-                        conn.setDoOutput(true);
-                        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+                    boolean useTopic = false;
 
-                        String postData = "chat_id=" + chatId + "&name=" + URLEncoder.encode(topicName, "UTF-8");
-                        OutputStream os = conn.getOutputStream();
-                        os.write(postData.getBytes("UTF-8"));
-                        os.flush(); os.close();
+                    // Пытаемся работать с топиком только если это ID группы (начинается с -100)
+                    if (chatId.startsWith("-100")) {
+                        if (topicCache.containsKey(topicName)) {
+                            threadId = topicCache.get(topicName);
+                            useTopic = true;
+                        } else {
+                            String urlString = "https://api.telegram.org/bot" + botToken + "/createForumTopic";
+                            URL url = new URL(urlString);
+                            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                            conn.setRequestMethod("POST");
+                            conn.setDoOutput(true);
+                            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
 
-                        if (conn.getResponseCode() == 200) {
-                            BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                            StringBuilder res = new StringBuilder(); String line;
-                            while ((line = in.readLine()) != null) res.append(line);
-                            in.close();
+                            String postData = "chat_id=" + chatId + "&name=" + URLEncoder.encode(topicName, "UTF-8");
+                            OutputStream os = conn.getOutputStream();
+                            os.write(postData.getBytes("UTF-8"));
+                            os.flush(); os.close();
 
-                            JSONObject json = new JSONObject(res.toString());
-                            threadId = json.getJSONObject("result").getInt("message_thread_id");
-                            topicCache.put(topicName, threadId);
+                            if (conn.getResponseCode() == 200) {
+                                BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                                StringBuilder res = new StringBuilder(); String line;
+                                while ((line = in.readLine()) != null) res.append(line);
+                                in.close();
+
+                                JSONObject json = new JSONObject(res.toString());
+                                threadId = json.getJSONObject("result").getInt("message_thread_id");
+                                topicCache.put(topicName, threadId);
+                                useTopic = true;
+                            }
+                            conn.disconnect();
                         }
-                        conn.disconnect();
                     }
 
-                    // Отправка самого сообщения в созданный топик
+                    // Отправка сообщения
                     String msgUrl = "https://api.telegram.org/bot" + botToken + "/sendMessage";
                     URL url = new URL(msgUrl);
                     HttpURLConnection conn = (HttpURLConnection) url.openConnection();
@@ -312,10 +314,10 @@ public class MaxNotificationListener extends NotificationListenerService {
                     conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
 
                     String postData = "chat_id=" + chatId 
-                                    + "&text=" + URLEncoder.encode("<b>" + senderName + ":</b>\n\n" + message.substring(message.indexOf("\n\n") + 2), "UTF-8") 
+                                    + "&text=" + URLEncoder.encode(message, "UTF-8") 
                                     + "&parse_mode=HTML";
                     
-                    if (threadId > 0) {
+                    if (useTopic && threadId > 0) {
                         postData += "&message_thread_id=" + threadId;
                     }
 
@@ -326,13 +328,12 @@ public class MaxNotificationListener extends NotificationListenerService {
                     conn.disconnect();
 
                 } catch (Exception e) {
-                    Log.e("MaxForwarder", "Ошибка отправки в топик", e);
+                    Log.e("MaxForwarder", "Ошибка отправки в TG", e);
                 }
             }
         }).start();
     }
 
-    // Простая прямая отправка без создания топиков (для статусов и системных ответов)
     private void sendRawMessage(final String message, final String botToken, final String chatId, final int threadId) {
         new Thread(new Runnable() {
             @Override
@@ -348,7 +349,7 @@ public class MaxNotificationListener extends NotificationListenerService {
                     String postData = "chat_id=" + chatId 
                                     + "&text=" + URLEncoder.encode(message, "UTF-8") 
                                     + "&parse_mode=HTML";
-                    if (threadId > 0) {
+                    if (threadId > 0 && chatId.startsWith("-100")) {
                         postData += "&message_thread_id=" + threadId;
                     }
 
