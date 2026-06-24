@@ -3,10 +3,17 @@ package com.example.maxforwarder;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.RemoteInput;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
+import android.os.BatteryManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import java.io.BufferedReader;
@@ -24,15 +31,43 @@ import org.json.JSONObject;
 
 public class MaxNotificationListener extends NotificationListenerService {
 
-    // Хранилище активных уведомлений. Ключ: Заголовок (Имя контакта), Значение: Уведомление
     private static final Map<String, Notification> activeNotifications = new HashMap<>();
+    // Хранилище созданных топиков в формате Ключ: Название_Чата, Значение: ID_Топика
+    private static final Map<String, Integer> topicCache = new HashMap<>();
+    
     private boolean isPolling = false;
     private int lastUpdateId = 0;
+    private static final String CHANNEL_ID = "MaxForwarderServiceChannel";
 
     @Override
     public void onCreate() {
         super.onCreate();
+        createNotificationChannel();
+        
+        // Включаем постоянное уведомление (Foreground), чтобы Android не закрывал службу
+        Notification notification = null;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            notification = new Notification.Builder(this, CHANNEL_ID)
+                    .setContentTitle("MAX Forwarder активен")
+                    .setContentText("Фоновая пересылка запущена и защищена от закрытия")
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .build();
+        } else {
+            notification = new Notification.Builder(this)
+                    .setContentTitle("MAX Forwarder активен")
+                    .setContentText("Фоновая пересылка запущена")
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .build();
+        }
+        
+        // Идентификатор службы 101
+        startForeground(101, notification);
         startTelegramPolling();
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        return START_STICKY; // Перезапускать службу, если она всё же упадет
     }
 
     @Override
@@ -54,7 +89,6 @@ public class MaxNotificationListener extends NotificationListenerService {
         String text = (textChar != null) ? textChar.toString() : "";
 
         if (!text.isEmpty() && !title.isEmpty()) {
-            // Сохраняем уведомление в памяти по его заголовку (Имени отправителя)
             activeNotifications.put(title, notification);
 
             String botToken = prefs.getString("tg_bot_token", "");
@@ -62,7 +96,6 @@ public class MaxNotificationListener extends NotificationListenerService {
 
             if (botToken.isEmpty() || chatId.isEmpty()) return;
 
-            // Формируем единый чистый заголовок для Telegram: "Имя (Название приложения)"
             String appLabel = "Приложение";
             try {
                 appLabel = getPackageManager().getApplicationLabel(
@@ -73,9 +106,12 @@ public class MaxNotificationListener extends NotificationListenerService {
                 }
             }
 
-            // Отправляем в Telegram. Формат строго: <b>Имя_Отправителя (Источник):</b>
-            String messageToSend = "<b>" + title + " (" + appLabel + "):</b>\n\n" + text;
-            sendToTelegramAsync(messageToSend, botToken, chatId);
+            // Имя топика (группировка по приложениям: например "MAX" или "SMS")
+            String topicName = appLabel;
+            String messageToSend = "<b>" + title + ":</b>\n\n" + text;
+            
+            // Отправляем в конкретный топик
+            sendToTelegramAsync(messageToSend, botToken, chatId, topicName, title);
         }
     }
 
@@ -111,7 +147,7 @@ public class MaxNotificationListener extends NotificationListenerService {
                         Log.e("MaxForwarder", "Ошибка пуллинга TG", e);
                     }
                     try {
-                        Thread.sleep(4000); // Опрос каждые 4 секунды
+                        Thread.sleep(4000);
                     } catch (InterruptedException e) {
                         break;
                     }
@@ -147,23 +183,30 @@ public class MaxNotificationListener extends NotificationListenerService {
 
                         if (!fromId.equals(myChatId)) continue;
 
-                        String text = message.optString("text", "");
+                        String text = message.optString("text", "").trim();
+                        int topicId = message.has("message_thread_id") ? message.getInt("message_thread_id") : 0;
 
-                        // Проверяем, ответил ли пользователь реплаем (Reply)
+                        // ОБРАБОТКА КОМАНДЫ СТАТУСА
+                        if (text.equalsIgnoreCase("/status")) {
+                            String statusReport = getPhoneStatus();
+                            sendRawMessage(statusReport, botToken, myChatId, topicId);
+                            continue;
+                        }
+
+                        // ОБРАБОТКА ОТВЕТОВ РЕПЛАЕМ
                         if (message.has("reply_to_message") && !text.isEmpty()) {
                             JSONObject replyTo = message.getJSONObject("reply_to_message");
                             String replyText = replyTo.optString("text", "");
 
-                            // Ищем текст до скобки " (", где начинается название приложения
-                            // Пример строки: "Иван Петров (MAX):" -> вырежем "Иван Петров"
-                            if (replyText.contains(" (") && replyText.contains("):")) {
-                                int endOfName = replyText.indexOf(" (");
-                                String chatTitle = replyText.substring(0, endOfName).trim();
+                            if (replyText.contains(":") && replyText.startsWith("<b>")) {
+                                int endOfName = replyText.indexOf(":</b>");
+                                if (endOfName != -1) {
+                                    String chatTitle = replyText.substring(7, endOfName).trim();
 
-                                // Отправляем быстрый ответ в шторку Android
-                                boolean success = replyToMax(chatTitle, text);
-                                String status = success ? "✅ Ответ отправлен" : "❌ Ошибка: Уведомление от " + chatTitle + " уже исчезло с экрана";
-                                sendToTelegramAsync(status, botToken, myChatId);
+                                    boolean success = replyToMax(chatTitle, text);
+                                    String status = success ? "✅ Ответ отправлен" : "❌ Ошибка: Уведомление уже исчезло";
+                                    sendRawMessage(status, botToken, myChatId, topicId);
+                                }
                             }
                         }
                     }
@@ -171,7 +214,30 @@ public class MaxNotificationListener extends NotificationListenerService {
             }
             conn.disconnect();
         } catch (Exception e) {
-            Log.e("MaxForwarder", "Ошибка парсинга обновлений TG", e);
+            Log.e("MaxForwarder", "Ошибка обработки обновлений", e);
+        }
+    }
+
+    // Метод получения статуса смартфона
+    private String getPhoneStatus() {
+        try {
+            IntentFilter ifilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+            Intent batteryStatus = registerReceiver(null, ifilter);
+            int level = batteryStatus != null ? batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) : -1;
+            
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
+            String netType = "Нет сети";
+            if (activeNetwork != null && activeNetwork.isConnectedOrConnecting()) {
+                netType = activeNetwork.getTypeName();
+            }
+
+            return "🤖 <b>Статус телефона:</b>\n" +
+                   "🔋 Заряд батареи: " + level + "%\n" +
+                   "🌐 Тип сети: " + netType + "\n" +
+                   "🚀 Служба пересылки: Активна";
+        } catch (Exception e) {
+            return "🤖 Служба активна, не удалось считать датчики.";
         }
     }
 
@@ -191,7 +257,7 @@ public class MaxNotificationListener extends NotificationListenerService {
                             action.actionIntent.send(getApplicationContext(), 0, intent);
                             return true;
                         } catch (Exception e) {
-                            Log.e("MaxForwarder", "Не удалось сымитировать ввод", e);
+                            Log.e("MaxForwarder", "Ошибка ввода", e);
                         }
                     }
                 }
@@ -200,38 +266,21 @@ public class MaxNotificationListener extends NotificationListenerService {
         return false;
     }
 
-    private void sendToTelegramAsync(final String message, final String botToken, final String chatId) {
+    // Асинхронная отправка с динамическим созданием топиков под каждое приложение
+    private void sendToTelegramAsync(final String message, final String botToken, final String chatId, final String topicName, final String senderName) {
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    String urlString = "https://api.telegram.org/bot" + botToken + "/sendMessage";
-                    URL url = new URL(urlString);
-                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                    conn.setRequestMethod("POST");
-                    conn.setDoOutput(true);
-                    conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-
-                    String postData = "chat_id=" + chatId 
-                                    + "&text=" + URLEncoder.encode(message, "UTF-8") 
-                                    + "&parse_mode=HTML";
-
-                    OutputStream os = conn.getOutputStream();
-                    os.write(postData.getBytes("UTF-8"));
-                    os.flush();
-                    os.close();
-                    conn.getResponseCode();
-                    conn.disconnect();
-                } catch (Exception e) {
-                    Log.e("MaxForwarder", "Ошибка отправки в TG", e);
-                }
-            }
-        }).start();
-    }
-
-    @Override
-    public void onDestroy() {
-        isPolling = false;
-        super.onDestroy();
-    }
-}
+                    int threadId = 0;
+                    
+                    if (topicCache.containsKey(topicName)) {
+                        threadId = topicCache.get(topicName);
+                    } else {
+                        // Запрос на создание топика в группе Telegram
+                        String urlString = "https://api.telegram.org/bot" + botToken + "/createForumTopic";
+                        URL url = new URL(urlString);
+                        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                        conn.setRequestMethod("POST");
+                        conn.setDoOutput(true);
+                        conn.setRequestProperty
