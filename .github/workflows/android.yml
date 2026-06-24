@@ -1,13 +1,13 @@
 name: Build and Release APK
 
 on:
-  workflow_dispatch: # Ручной запуск из вкладки Actions
+  workflow_dispatch: # Ручной запуск
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Права на редактирование релизов
+      contents: write
 
     steps:
       - uses: actions/checkout@v5
@@ -17,11 +17,25 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          
-      - name: Build Debug APK
-        run: gradle assembleDebug -PbuildNumber=${{ github.run_number }}
-        
-      # Создание релиза с принудительной очисткой старых файлов
+
+      # Шаг генерации официального цифрового ключа (Keystore)
+      - name: Generate Signing Key
+        run: |
+          keytool -genkey -v -keystore my-release-key.jks -keyalg RSA -keysize 2048 -validity 10000 \
+            -alias my-key-alias -storepass my_secret_password -keypass my_secret_password \
+            -dname "CN=MaxForwarder, OU=Development, O=MaxOrg, L=Perm, S=PermKrai, C=RU"
+
+      # Сборка и автоматическое подписание APK
+      - name: Build and Sign Release APK
+        run: |
+          gradle assembleDebug -PbuildNumber=${{ github.run_number }}
+          # Подписываем созданный APK с помощью утилиты apksigner из Android SDK
+          $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks my-release-key.jks \
+            --ks-pass pass:my_secret_password \
+            --key-pass pass:my_secret_password \
+            app/build/outputs/apk/debug/*.apk
+
+      # Публикация подписанного APK в релизы
       - name: Create Release and Upload APK
         uses: softprops/action-gh-release@v2
         with:
@@ -30,5 +44,5 @@ jobs:
           draft: false
           prerelease: false
           make_latest: true
-          overwrite: true # КРИТИЧЕСКИЙ ПАРАМЕТР: заставляет удалять старые ассеты с другими именами перед заливкой
+          overwrite: true
           files: app/build/outputs/apk/debug/*.apk
