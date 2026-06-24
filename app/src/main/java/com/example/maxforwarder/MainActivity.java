@@ -103,23 +103,36 @@ public class MainActivity extends Activity {
         startTelegramPolling();
     }
 
-    private void loadInstalledApps() {
+private void loadInstalledApps() {
         PackageManager pm = getPackageManager();
-        List<ApplicationInfo> packages = pm.getInstalledApplications(PackageManager.GET_META_DATA);
+        List<ApplicationInfo> packages;
+        
+        try {
+            // Запрашиваем абсолютно все приложения, включая скрытые и системные компоненты
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION.SDK_INT) {
+                packages = pm.getInstalledApplications(PackageManager.MATCH_ALL);
+            } else {
+                packages = pm.getInstalledApplications(PackageManager.GET_META_DATA);
+            }
+        } catch (Exception e) {
+            packages = pm.getInstalledApplications(0);
+        }
+
         List<AppInfo> appList = new ArrayList<>();
         Set<String> savedPackages = prefs.getStringSet("allowed_packages", new HashSet<String>());
 
         for (ApplicationInfo packageInfo : packages) {
-            if ((packageInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0 || 
-                packageInfo.packageName.contains("telephony") || 
-                packageInfo.packageName.contains("mms") || 
-                packageInfo.packageName.contains("messaging")) {
-                
-                String label = packageInfo.loadLabel(pm).toString();
-                boolean isChecked = savedPackages.contains(packageInfo.packageName);
-                appList.add(new AppInfo(label, packageInfo.packageName, isChecked));
-            }
+            // Убираем жесткий фильтр, чтобы показать вообще ВСЕ приложения (и системные, и пользовательские)
+            String label = packageInfo.loadLabel(pm).toString();
+            boolean isChecked = savedPackages.contains(packageInfo.packageName);
+            appList.add(new AppInfo(label, packageInfo.packageName, isChecked));
         }
+        
+        // Сортируем список по алфавиту для удобства поиска
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            appList.sort((a, b) -> a.name.compareToIgnoreCase(b.name));
+        }
+
         adapter = new AppAdapter(this, appList);
         lvApps.setAdapter(adapter);
     }
