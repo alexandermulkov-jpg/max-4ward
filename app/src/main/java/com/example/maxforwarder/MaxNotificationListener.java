@@ -3,9 +3,6 @@ package com.example.maxforwarder;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.RemoteInput;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -13,7 +10,6 @@ import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.os.BatteryManager;
-import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import java.io.BufferedReader;
@@ -36,35 +32,17 @@ public class MaxNotificationListener extends NotificationListenerService {
     
     private boolean isPolling = false;
     private int lastUpdateId = 0;
-    private static final String CHANNEL_ID = "MaxForwarderServiceChannel";
 
     @Override
     public void onCreate() {
         super.onCreate();
-        createNotificationChannel();
-        
-        Notification notification = null;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            notification = new Notification.Builder(this, CHANNEL_ID)
-                    .setContentTitle("MAX Forwarder активен")
-                    .setContentText("Фоновая пересылка запущена")
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .build();
-        } else {
-            notification = new Notification.Builder(this)
-                    .setContentTitle("MAX Forwarder активен")
-                    .setContentText("Фоновая пересылка запущена")
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .build();
-        }
-        
-        startForeground(101, notification);
+        // Просто запускаем пуллинг Telegram-команд без принудительных уведомлений в шторку
         startTelegramPolling();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        return START_STICKY;
+        return START_STICKY; // Позволяет службе перезапускаться автоматически
     }
 
     @Override
@@ -106,7 +84,6 @@ public class MaxNotificationListener extends NotificationListenerService {
             String topicName = appLabel;
             String messageToSend = "<b>" + title + " (" + appLabel + "):</b>\n\n" + text;
             
-            // Запускаем умную отправку
             sendToTelegramAsync(messageToSend, botToken, chatId, topicName);
         }
     }
@@ -177,7 +154,6 @@ public class MaxNotificationListener extends NotificationListenerService {
                         JSONObject message = update.getJSONObject("message");
                         String fromId = message.getJSONObject("from").getString("id");
 
-                        // Проверяем отправителя (работает как для личного ID, так и внутри группы)
                         if (!fromId.equals(myChatId) && !message.getJSONObject("chat").getString("id").equals(myChatId)) continue;
 
                         String text = message.optString("text", "").trim();
@@ -263,7 +239,6 @@ public class MaxNotificationListener extends NotificationListenerService {
         return false;
     }
 
-    // Умная отправка: сначала пытается отправить в топик. Если чат не поддерживает топики — отправляет обычным текстом.
     private void sendToTelegramAsync(final String message, final String botToken, final String chatId, final String topicName) {
         new Thread(new Runnable() {
             @Override
@@ -272,7 +247,6 @@ public class MaxNotificationListener extends NotificationListenerService {
                     int threadId = 0;
                     boolean useTopic = false;
 
-                    // Пытаемся работать с топиком только если это ID группы (начинается с -100)
                     if (chatId.startsWith("-100")) {
                         if (topicCache.containsKey(topicName)) {
                             threadId = topicCache.get(topicName);
@@ -305,7 +279,6 @@ public class MaxNotificationListener extends NotificationListenerService {
                         }
                     }
 
-                    // Отправка сообщения
                     String msgUrl = "https://api.telegram.org/bot" + botToken + "/sendMessage";
                     URL url = new URL(msgUrl);
                     HttpURLConnection conn = (HttpURLConnection) url.openConnection();
@@ -363,20 +336,6 @@ public class MaxNotificationListener extends NotificationListenerService {
                 }
             }
         }).start();
-    }
-
-    private void createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel serviceChannel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "Max Forwarder Background Service",
-                    NotificationManager.IMPORTANCE_LOW
-            );
-            NotificationManager manager = getSystemService(NotificationManager.class);
-            if (manager != null) {
-                manager.createNotificationChannel(serviceChannel);
-            }
-        }
     }
 
     @Override
